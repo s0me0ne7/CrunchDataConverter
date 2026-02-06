@@ -242,9 +242,9 @@ class ExtendedReport:
         # Упорядочиваем колонки
         self.df = self.df.reindex(columns=self.FINAL_COLNAMES)
 
-        # Сортировка по Код модели, затем по Магазин (как в старой версии)
+        # Сортировка по Артикул, затем по Магазин (как в старой версии)
         self.df = self.df.sort_values(
-            by=["Код модели", "Магазин"],
+            by=["Артикул", "Магазин"],
             key=lambda x: x.astype(str)
         ).reset_index(drop=True)
 
