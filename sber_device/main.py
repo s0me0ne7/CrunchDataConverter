@@ -78,12 +78,8 @@ if uploaded_df is not None:
         )
 
     # Выбор периода отчета
-    period = sidebar.date_input("Выбрать период", help="Выбор даты отчета").strftime(
-        "%d %b %Y"
-    )
-
-    # Перевод наименований месяцев на русский язык
-    period = replacer(period)
+    date_input = sidebar.date_input("Выбрать период", help="Выбор даты отчета")
+    period = replacer(date_input.strftime("%d %b %Y")) if date_input else ""
 
     # Выбор товарной категории отчета
     selected_category = sidebar.selectbox(
@@ -111,9 +107,13 @@ if uploaded_df is not None:
                     try:
                         result = run_dns_extended(uploaded)
                         config = Config(dns_retailer_config_extended, report_config)
-                    except KeyError:
-                        result = run_dns_lamp_version(uploaded)
-                        config = Config(dns_retailer_config_lamp_version, report_config)
+                    except KeyError as e:
+                        # Пробуем формат "Лампы" если не найдены колонки расширенного формата
+                        if "Код магазина" in str(e) or "metric" in str(e):
+                            result = run_dns_lamp_version(uploaded)
+                            config = Config(dns_retailer_config_lamp_version, report_config)
+                        else:
+                            raise KeyError(f"Неизвестная структура файла: {e}") from e
                 else:
                     result = run_dns_new(uploaded)
                     config = Config(dns_retailer_config_new, report_config)

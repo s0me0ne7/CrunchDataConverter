@@ -34,8 +34,9 @@ def replacer(s: str) -> str:
     str
         Строка с преобразованным названием месяца.
     """
-    match = month_pattern.search(s).group(0)
+    match = month_pattern.search(s)
 
     if match is not None:
-        s = s.replace(match, month_mapper.get(match))
+        month = match.group(0)
+        s = s.replace(month, month_mapper.get(month, month))
     return s

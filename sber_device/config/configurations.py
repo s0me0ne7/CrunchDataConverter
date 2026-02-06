@@ -65,7 +65,3 @@ class Config:
         self.parameters = ReturnTuple(
             **(asdict(retailer_config) | asdict(report_config))
         )
-
-        # Требуется для сериализации класса
-        def __reduce__(self):
-            return self.__class__, (self.parameters,)

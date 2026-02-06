@@ -1,7 +1,6 @@
 from collections import namedtuple
 from dataclasses import InitVar, dataclass
 from pathlib import Path
-import string
 from typing import ClassVar
 
 import pandas as pd
@@ -75,7 +74,7 @@ class Writer:
         """
 
         x, y = df.shape
-        right_bound = string.ascii_uppercase[y - 1]
+        right_bound = get_column_letter(y)
 
         # Create workbook and worksheet
         wb = Workbook()
