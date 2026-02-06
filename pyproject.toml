@@ -1,0 +1,25 @@
+[project]
+name = "sber_device"
+version = "1.2.0"
+description = "Обработка отчетов"
+authors = [
+    {name = "SL"}
+]
+license = {text = "DoNotTouch"}
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit (>=1.44.1,<2.0.0)",
+    "pandas (>=2.2.3,<3.0.0)",
+    "numpy (>=2.2.4,<3.0.0)",
+    "openpyxl (>=3.1.5,<4.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+jupyter = "^1.1.1"
+
