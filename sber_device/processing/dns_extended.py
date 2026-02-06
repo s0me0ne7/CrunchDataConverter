@@ -5,7 +5,6 @@ from typing import ClassVar
 import numpy as np
 import pandas as pd
 
-from .dns_new_version import get_col_name_for_value
 from config.configurations import RetailerConfig
 
 dns_retailer_config_extended = RetailerConfig(
@@ -19,14 +18,29 @@ dns_retailer_config_extended = RetailerConfig(
 
 @dataclass
 class ExtendedReport:
-    df_path: InitVar[Path | str]
-    df: pd.DataFrame | None = None
-    sku_field_name: str | None = field(init=False, default=None)
+    """
+    Обработчик расширенного отчёта ДНС.
 
-    LIST_OF_VALID_COLNAMES: ClassVar[list[str]] = [
-        "Код",
-        "Товар",
-        "КодПроизводителя",
+    Структура входного файла:
+    - Row 0: Названия групп (Изделие, Итого, названия магазинов)
+    - Row 1: Метки полей (Код, Товар, КодПроизводителя) + коды магазинов
+    - Row 2: Названия метрик (повторяются для каждого магазина)
+    - Row 3: Строка итогов по категории
+    - Row 4+: Данные товаров
+
+    Колонки:
+    - Col 0: Код товара
+    - Col 2: Название товара
+    - Col 4: Артикул
+    - Col 5+: Блоки по 6 колонок для каждого магазина (метрики)
+    """
+
+    df_path: InitVar[Path | str]
+    df: pd.DataFrame | None = field(init=False, default=None)
+    raw_df: pd.DataFrame | None = field(init=False, default=None)
+
+    # Названия метрик в исходном файле (порядок важен - соответствует порядку колонок)
+    METRICS: ClassVar[list[str]] = [
         "Кол-во",
         "Себестоимость без НДС",
         "Ост. Сумма без НДС",
@@ -35,14 +49,18 @@ class ExtendedReport:
         "Продажа без НДС",
     ]
 
-    TMP_COLNAMES: ClassVar[list[str]] = [
-        "Артикул",
-        "Наименование",
-        "Код модели",
-        "Магазин",
-        "Код магазина",
-        "metric",
-        "value",
+    # Маппинг метрик на выходные названия
+    METRIC_MAPPING: ClassVar[dict[str, str]] = {
+        "Кол-во": "Продажи, шт",
+        "Ост. кол-во": "Остатки, шт",
+        "Ост. пути": "Остатки в пути",
+    }
+
+    # Целочисленные поля
+    INTEGER_FIELDS: ClassVar[list[str]] = [
+        "Продажи, шт",
+        "Остатки, шт",
+        "Остатки в пути",
     ]
 
     FINAL_COLNAMES: ClassVar[list[str]] = [
@@ -60,80 +78,185 @@ class ExtendedReport:
     ]
 
     def __post_init__(self, df_path: Path | str) -> None:
-        self.df = pd.read_excel(df_path, header=0)
-        if self.df is None:
+        # Читаем без заголовка чтобы сохранить структуру
+        self.raw_df = pd.read_excel(df_path, header=None, dtype=object)
+        if self.raw_df is None or self.raw_df.empty:
             raise ValueError("Нет данных для обработки")
-        self.sku_field_name = get_col_name_for_value(self.df, required_value="Товар")[0]
 
-    def _fill_nan_values(self) -> None:
+    def _find_product_columns(self) -> dict[str, int]:
         """
-        Заполнение пропущенных значений и подготовка таблицы для трансформации в отчет.
+        Найти колонки с идентификаторами товара по значениям в Row 1.
 
         Returns
         -------
-        None
+        dict[str, int]
+            Словарь {название_поля: индекс_колонки}
         """
-        self.df.iloc[[0], :] = self.df.iloc[[0], :].infer_objects().ffill(axis=1)
-        self.df = self.df.dropna(subset=[self.sku_field_name]).dropna(how="all", axis=1)
-        self.df = self.df.T.reset_index().map(
-            lambda x: np.nan
-            if ((isinstance(x, str)) and x.startswith("Unnamed"))
-            else x
-        )
-        self.df = self.df.assign(index=self.df["index"].ffill())
-        self.df = (
-            self.df.loc[self.df.loc[:, 1].isin(self.LIST_OF_VALID_COLNAMES)]
-            .loc[self.df["index"] != "Итого"]
-            .fillna(0.0)
-            .set_index(["index", 0, 1])
-            .T.rename_axis([None, None, None], axis=1)
-        )
+        row1 = self.raw_df.iloc[1]
+        product_cols = {}
+
+        for col_idx, value in enumerate(row1):
+            if value == "Код":
+                product_cols["Код"] = col_idx
+            elif value == "Товар":
+                product_cols["Товар"] = col_idx
+            elif value == "КодПроизводителя":
+                product_cols["КодПроизводителя"] = col_idx
+
+        required = {"Код", "Товар", "КодПроизводителя"}
+        missing = required - set(product_cols.keys())
+        if missing:
+            raise KeyError(f"Не найдены обязательные поля в строке 1: {missing}")
+
+        return product_cols
+
+    def _find_shop_blocks(self) -> list[dict]:
+        """
+        Найти блоки колонок для каждого магазина.
+
+        Returns
+        -------
+        list[dict]
+            Список словарей с информацией о магазинах:
+            [{'name': 'Магазин', 'code': '5645', 'start_col': 11}, ...]
+        """
+        row0 = self.raw_df.iloc[0]  # Названия магазинов
+        row1 = self.raw_df.iloc[1]  # Коды магазинов
+        row2 = self.raw_df.iloc[2]  # Метрики
+
+        shops = []
+        metrics_count = len(self.METRICS)
+
+        # Найти первую колонку с метриками (где Row 2 == "Кол-во")
+        first_metric_col = None
+        for col_idx, value in enumerate(row2):
+            if value == "Кол-во":
+                first_metric_col = col_idx
+                break
+
+        if first_metric_col is None:
+            raise KeyError("Не найдена колонка с метрикой 'Кол-во'")
+
+        # Пропускаем блок "Итого" (первый блок метрик)
+        current_col = first_metric_col + metrics_count
+
+        while current_col < len(row0):
+            shop_name = row0.iloc[current_col]
+            shop_code = row1.iloc[current_col]
+
+            # Проверяем что это действительно магазин (есть название)
+            if pd.notna(shop_name) and shop_name != "Итого":
+                shops.append({
+                    "name": str(shop_name),
+                    "code": str(shop_code) if pd.notna(shop_code) else "",
+                    "start_col": current_col,
+                })
+
+            current_col += metrics_count
+
+        return shops
+
+    def _get_product_data(self, product_cols: dict[str, int]) -> pd.DataFrame:
+        """
+        Извлечь данные товаров (без метрик).
+
+        Parameters
+        ----------
+        product_cols : dict[str, int]
+            Индексы колонок с идентификаторами товара.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame с колонками [Код модели, Наименование, Артикул]
+        """
+        # Данные начинаются с Row 4 (Row 3 - это итоги по категории)
+        data_start_row = 4
+
+        products = pd.DataFrame({
+            "Код модели": self.raw_df.iloc[data_start_row:, product_cols["Код"]],
+            "Наименование": self.raw_df.iloc[data_start_row:, product_cols["Товар"]],
+            "Артикул": self.raw_df.iloc[data_start_row:, product_cols["КодПроизводителя"]],
+        }).reset_index(drop=True)
+
+        return products
 
     def create_report(self) -> None:
         """
-        Сборка отчета и сохранение его в атрибуте класса df.
-
-        Returns
-        -------
-        None
+        Сборка отчёта.
         """
-        self._fill_nan_values()
-        self.df = self.df.melt(id_vars=self.df.columns[:3].tolist())
-        self.df.columns = self.TMP_COLNAMES
-        self.df = (
-            self.df.set_index(self.TMP_COLNAMES[:6])
-            .unstack()
-            .droplevel(level=0, axis=1)
-            .reset_index()
-            .rename_axis(None, axis=1)
-            .rename(
-                columns={
-                    "Кол-во": "Продажи, шт",
-                    "Ост. кол-во": "Остатки, шт",
-                    "Ост. пути": "Остатки в пути",
+        product_cols = self._find_product_columns()
+        shops = self._find_shop_blocks()
+        products = self._get_product_data(product_cols)
+
+        if not shops:
+            raise ValueError("Не найдено ни одного магазина в данных")
+
+        data_start_row = 4
+        metrics_count = len(self.METRICS)
+        all_rows = []
+
+        # Для каждого товара и каждого магазина создаём строку
+        for prod_idx in range(len(products)):
+            raw_row_idx = data_start_row + prod_idx
+
+            for shop in shops:
+                row_data = {
+                    "Код модели": products.iloc[prod_idx]["Код модели"],
+                    "Наименование": products.iloc[prod_idx]["Наименование"],
+                    "Артикул": products.iloc[prod_idx]["Артикул"],
+                    "Магазин": shop["name"],
+                    "Код магазина": shop["code"],
                 }
-            )
-            .reindex(self.FINAL_COLNAMES, axis=1)
-        )
-        self.df.loc[:, ["Продажи, шт", "Остатки, шт", "Остатки в пути"]] = self.df.loc[
-            :, ["Продажи, шт", "Остатки, шт", "Остатки в пути"]
-        ].astype(int)
+
+                # Извлекаем метрики для этого магазина
+                for metric_idx, metric_name in enumerate(self.METRICS):
+                    col_idx = shop["start_col"] + metric_idx
+                    value = self.raw_df.iloc[raw_row_idx, col_idx]
+
+                    # Применяем маппинг названий
+                    output_name = self.METRIC_MAPPING.get(metric_name, metric_name)
+                    row_data[output_name] = value if pd.notna(value) else 0
+
+                all_rows.append(row_data)
+
+        self.df = pd.DataFrame(all_rows)
+
+        # Преобразование типов
+        for field in self.INTEGER_FIELDS:
+            if field in self.df.columns:
+                self.df[field] = pd.to_numeric(self.df[field], errors="coerce").fillna(0).astype(int)
+
+        # Числовые поля
+        numeric_fields = ["Себестоимость без НДС", "Ост. Сумма без НДС", "Продажа без НДС"]
+        for field in numeric_fields:
+            if field in self.df.columns:
+                self.df[field] = pd.to_numeric(self.df[field], errors="coerce").fillna(0)
+
+        # Фильтруем нулевые строки (все метрики == 0)
+        metric_cols = self.INTEGER_FIELDS + numeric_fields
+        existing_metric_cols = [c for c in metric_cols if c in self.df.columns]
+        mask = self.df[existing_metric_cols].any(axis=1)
+        self.df = self.df[mask].reset_index(drop=True)
+
+        # Упорядочиваем колонки
+        self.df = self.df.reindex(columns=self.FINAL_COLNAMES)
 
 
 def run_dns_extended(path: Path | str) -> pd.DataFrame:
     """
-    Обработка нового отчета с расширенным количеством полей (июль 2025)
+    Обработка расширенного отчёта ДНС.
 
     Parameters
     ----------
-    path : Path
-        Путь к файлу с отчетом.
+    path : Path | str
+        Путь к файлу с отчётом.
 
-    Return
-    ------
+    Returns
+    -------
     pd.DataFrame
-        Отчет в формате pandas.DataFrame.
+        Отчёт в формате pandas.DataFrame.
     """
-    extended_processor = ExtendedReport(path)
-    extended_processor.create_report()
-    return extended_processor.df
+    processor = ExtendedReport(path)
+    processor.create_report()
+    return processor.df
