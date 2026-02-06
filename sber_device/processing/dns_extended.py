@@ -173,10 +173,11 @@ class ExtendedReport:
         # Данные начинаются с Row 4 (Row 3 - это итоги по категории)
         data_start_row = 4
 
+        # Маппинг: Код модели = КодПроизводителя, Артикул = Код (внутренний код ДНС)
         products = pd.DataFrame({
-            "Код модели": self.raw_df.iloc[data_start_row:, product_cols["Код"]],
+            "Код модели": self.raw_df.iloc[data_start_row:, product_cols["КодПроизводителя"]],
             "Наименование": self.raw_df.iloc[data_start_row:, product_cols["Товар"]],
-            "Артикул": self.raw_df.iloc[data_start_row:, product_cols["КодПроизводителя"]],
+            "Артикул": self.raw_df.iloc[data_start_row:, product_cols["Код"]],
         }).reset_index(drop=True)
 
         return products
@@ -232,12 +233,6 @@ class ExtendedReport:
         for field in numeric_fields:
             if field in self.df.columns:
                 self.df[field] = pd.to_numeric(self.df[field], errors="coerce").fillna(0)
-
-        # Фильтруем нулевые строки (все метрики == 0)
-        metric_cols = self.INTEGER_FIELDS + numeric_fields
-        existing_metric_cols = [c for c in metric_cols if c in self.df.columns]
-        mask = self.df[existing_metric_cols].any(axis=1)
-        self.df = self.df[mask].reset_index(drop=True)
 
         # Упорядочиваем колонки
         self.df = self.df.reindex(columns=self.FINAL_COLNAMES)
