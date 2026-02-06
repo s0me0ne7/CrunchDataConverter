@@ -223,6 +223,11 @@ class ExtendedReport:
 
         self.df = pd.DataFrame(all_rows)
 
+        # Фильтруем строки-итоги (где Артикул не является числом)
+        self.df = self.df[
+            pd.to_numeric(self.df["Артикул"], errors="coerce").notna()
+        ].reset_index(drop=True)
+
         # Преобразование типов
         for field in self.INTEGER_FIELDS:
             if field in self.df.columns:
