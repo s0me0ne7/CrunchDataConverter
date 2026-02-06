@@ -228,6 +228,10 @@ class ExtendedReport:
             pd.to_numeric(self.df["Артикул"], errors="coerce").notna()
         ].reset_index(drop=True)
 
+        # Преобразование Артикул и Код магазина в числовые
+        self.df["Артикул"] = pd.to_numeric(self.df["Артикул"], errors="coerce").astype(int)
+        self.df["Код магазина"] = pd.to_numeric(self.df["Код магазина"], errors="coerce").fillna(0).astype(int)
+
         # Преобразование типов
         for field in self.INTEGER_FIELDS:
             if field in self.df.columns:
@@ -244,8 +248,7 @@ class ExtendedReport:
 
         # Сортировка по Артикул, затем по Магазин (как в старой версии)
         self.df = self.df.sort_values(
-            by=["Артикул", "Магазин"],
-            key=lambda x: x.astype(str)
+            by=["Артикул", "Магазин"]
         ).reset_index(drop=True)
 
 
