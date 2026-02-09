@@ -29,18 +29,20 @@ def get_mvm_data(data: pd.DataFrame) -> pd.DataFrame:
     data.loc[1] = data.loc[1].ffill()
     data = data.reset_index(drop=True)
 
-    # make and save model code mapper to use in the final output table
-    model_code_mapper = {
-        name: code
-        for name, code in zip(data.loc[3:, "model"], data.loc[3:, "model_code"])
-    }
+    # Encode model_code into model for uniqueness during transpose
+    data.loc[3:, "model"] = (
+        data.loc[3:, "model_code"].astype(str) + "|||" + data.loc[3:, "model"].astype(str)
+    )
 
     data = data.drop(columns="model_code")
     data = data.set_index(["model"]).T.reset_index(drop=True).fillna(0)
 
     # melting
     data = data.melt(id_vars=["city", "code", "Наименование"])
-    data["model_code"] = data["model"].map(model_code_mapper)
+
+    # Split model back into model_code and model name
+    data[["model_code", "model"]] = data["model"].str.split("|||", n=1, expand=True)
+
     data = (
         data.groupby(["model_code", "model", "city", "code", "Наименование"], as_index=False)
         .agg({"value": "sum"})
