@@ -8,7 +8,7 @@ from openpyxl.workbook import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl.styles import numbers, cell_style, named_styles, Font, Border, Side
+from openpyxl.styles import numbers, Font
 from openpyxl.worksheet.dimensions import ColumnDimension
 
 from config.configurations import Config

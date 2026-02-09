@@ -1,13 +1,9 @@
 import os
 import time
 
-import pandas as pd
 import streamlit as st
 from config.configurations import Config, ReportConfig
 from processing.dns_extended import dns_retailer_config_extended, run_dns_extended
-from processing.dns_lamp_version import dns_retailer_config_lamp_version, run_dns_lamp_version
-from processing.dns_new_version import dns_retailer_config_new, run_dns_new
-from processing.dns_old_version import dns_retailer_config_old, run_dns_old
 from processing.mvm import mvm_retailer_config, run_mvm
 from utils.io import DEFAULT_SAVE_PATH, Writer
 from utils.mappings import replacer
@@ -21,15 +17,9 @@ st.header("Порядок работы")
 st.markdown("""
 1. Загрузить файл, используя кнопку на панели слева или перетащив файл на поле загрузки.
 2. Выбрать сеть из выпадающего списка.
-3. Если выбрана сеть ДНС, появится дополнительное поле, в котором нужно выбрать формат отчета: 
-    - "Новый"
-    - "Расширенный"
-    - "Старый"
-    
-    "Расширенный" подразумевает наличие дополнительных полей с остатками в рублях, себестоимостью и продажами.
-4. Выбрать дату отчета.
-5. Нажать кнопку "Обработать загруженный файл". На странице отобразится таблца с обработанными данными.
-6. Если все верно, можно загрузить файл в формате Excel, нажав на кнопку "Скачать файл".
+3. Выбрать дату отчета.
+4. Нажать кнопку "Обработать загруженный файл". На странице отобразится таблица с обработанными данными.
+5. Если все верно, можно загрузить файл в формате Excel, нажав на кнопку "Скачать файл".
 """)
 
 # Товарные категории
@@ -43,17 +33,7 @@ uploaded = sidebar.file_uploader(
 )
 
 
-@st.fragment
-@st.cache_data(max_entries=1, show_spinner=True, ttl=600)
-def load_and_show(path) -> pd.DataFrame | None:
-    if path:
-        return pd.read_excel(path, dtype=str)
-    return None
-
-
-uploaded_df = load_and_show(uploaded)
-
-if uploaded_df is not None:
+if uploaded is not None:
     # Выбор названия сети
     retailer = sidebar.selectbox(
         "Выбрать сеть",
@@ -62,20 +42,6 @@ if uploaded_df is not None:
         index=None,
         placeholder="Выбрать сеть",
     )
-
-    # Выбор формата отчета для ДНС
-    if retailer == "ДНС":
-        report_type = sidebar.radio(
-            "Формат отчета",
-            options=["Новый", "Расширенный", "Старый"],
-            captions=[
-                None,
-                "Включает себестоимость, остатки и продажи в денежном выражении",
-                None,
-            ],
-            help="Выбор формата отчета. Алгоритм обработки зависит от выбранного формата.",
-            index=None,
-        )
 
     # Выбор периода отчета
     date_input = sidebar.date_input("Выбрать период", help="Выбор даты отчета")
@@ -100,23 +66,8 @@ if uploaded_df is not None:
                 result = run_mvm(uploaded)
                 config = Config(mvm_retailer_config, report_config)
             case "ДНС":
-                if report_type == "Старый":
-                    result = run_dns_old(uploaded)
-                    config = Config(dns_retailer_config_old, report_config)
-                elif report_type == "Расширенный":
-                    try:
-                        result = run_dns_extended(uploaded)
-                        config = Config(dns_retailer_config_extended, report_config)
-                    except KeyError as e:
-                        # Пробуем формат "Лампы" если не найдены колонки расширенного формата
-                        if "Код магазина" in str(e) or "metric" in str(e):
-                            result = run_dns_lamp_version(uploaded)
-                            config = Config(dns_retailer_config_lamp_version, report_config)
-                        else:
-                            raise KeyError(f"Неизвестная структура файла: {e}") from e
-                else:
-                    result = run_dns_new(uploaded)
-                    config = Config(dns_retailer_config_new, report_config)
+                result = run_dns_extended(uploaded)
+                config = Config(dns_retailer_config_extended, report_config)
             case _:
                 raise ValueError("Неизвестное название сети.")
         return result, config
