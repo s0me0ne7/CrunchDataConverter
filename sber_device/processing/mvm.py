@@ -41,7 +41,7 @@ def get_mvm_data(data: pd.DataFrame) -> pd.DataFrame:
     data = data.melt(id_vars=["city", "code", "Наименование"])
 
     # Split model back into model_code and model name
-    data[["model_code", "model"]] = data["model"].str.split("|||", n=1, expand=True)
+    data[["model_code", "model"]] = data["model"].str.split("|||", n=1, expand=True, regex=False)
 
     data = (
         data.groupby(["model_code", "model", "city", "code", "Наименование"], as_index=False)
