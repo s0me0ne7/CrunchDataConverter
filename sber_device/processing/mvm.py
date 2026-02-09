@@ -35,7 +35,7 @@ def get_mvm_data(data: pd.DataFrame) -> pd.DataFrame:
     )
 
     data = data.drop(columns="model_code")
-    data = data.set_index(["model"]).T.reset_index(drop=True).fillna(0)
+    data = data.set_index(["model"]).T.reset_index(drop=True).fillna(0).infer_objects(copy=False)
 
     # melting
     data = data.melt(id_vars=["city", "code", "Наименование"])
