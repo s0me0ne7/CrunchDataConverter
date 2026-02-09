@@ -94,4 +94,11 @@ def run_mvm(path: Path | str, header=2):
         print(e)
         data = read_excel(path, header=0)
 
+    # Обрезаем фильтровые строки: ищем первую строку с данными в per-store колонках
+    # (col 6 = NaN, но колонки 33+ содержат данные — это строка с городами)
+    for i in range(len(data)):
+        if pd.isna(data.iloc[i, 6]) and data.iloc[i, 33:].notna().any():
+            data = data.iloc[i:].reset_index(drop=True)
+            break
+
     return get_mvm_data(data=data)
