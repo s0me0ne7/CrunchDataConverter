@@ -40,14 +40,18 @@ def get_mvm_data(data: pd.DataFrame) -> pd.DataFrame:
 
     # melting
     data = data.melt(id_vars=["city", "code", "Наименование"])
+    data["model_code"] = data["model"].map(model_code_mapper)
     data = (
-        data.set_index(["model", "city", "code", "Наименование"])
-        .unstack(3)
+        data.groupby(["model_code", "model", "city", "code", "Наименование"], as_index=False)
+        .agg({"value": "sum"})
+    )
+    data = (
+        data.set_index(["model_code", "model", "city", "code", "Наименование"])
+        .unstack(4)
         .reset_index()
     )
-    data.insert(
-        0, "model_code", value=data.model.map(model_code_mapper)
-    )  # insert columns with model codes
+    # Flatten multi-level columns after unstack
+    data.columns = [col[1] if col[1] else col[0] for col in data.columns]
 
     col_names = [
         "Артикул",
