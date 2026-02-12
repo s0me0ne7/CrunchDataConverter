@@ -74,7 +74,8 @@ def get_mvm_data(data: pd.DataFrame) -> pd.DataFrame:
         | (r["Продажи, руб"] != 0)
         | (r["Продажи, шт"] != 0)
     ]
-    data = data.iloc[:, [0, 1, 2, 3, 7, 6, 4, 5]].reset_index(drop=True)
+    data = data.iloc[:, [0, 1, 2, 3, 7, 6, 4, 5]]
+    data = data.sort_values(by=["Артикул", "Город"]).reset_index(drop=True)
 
     return data
 
