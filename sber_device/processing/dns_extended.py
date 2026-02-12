@@ -260,7 +260,7 @@ class ExtendedReport:
 
         # Сортировка
         self.df = self.df.sort_values(
-            by=["Артикул", "Магазин"]
+            by=["Код модели", "Магазин"]
         ).reset_index(drop=True)
 
 
