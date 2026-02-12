@@ -22,32 +22,19 @@ class ExtendedReport:
     Обработчик расширенного отчёта ДНС.
 
     Структура входного файла:
-    - Row 0: Названия групп (Изделие, Итого, названия магазинов)
+    - Row 0: Названия групп (Изделие, Итого, названия магазинов — объединённые ячейки)
     - Row 1: Метки полей (Код, Товар, КодПроизводителя) + коды магазинов
     - Row 2: Названия метрик (повторяются для каждого магазина)
     - Row 3: Строка итогов по категории
     - Row 4+: Данные товаров
 
-    Колонки:
-    - Col 0: Код товара
-    - Col 2: Название товара
-    - Col 4: Артикул
-    - Col 5+: Блоки по 6 колонок для каждого магазина (метрики)
+    Блоки магазинов имеют переменный размер (объединённые ячейки),
+    поэтому поиск магазинов выполняется динамически по Row 0.
     """
 
     df_path: InitVar[Path | str]
     df: pd.DataFrame | None = field(init=False, default=None)
     raw_df: pd.DataFrame | None = field(init=False, default=None)
-
-    # Названия метрик в исходном файле (порядок важен - соответствует порядку колонок)
-    METRICS: ClassVar[list[str]] = [
-        "Кол-во",
-        "Себестоимость без НДС",
-        "Ост. Сумма без НДС",
-        "Ост. пути",
-        "Ост. кол-во",
-        "Продажа без НДС",
-    ]
 
     # Маппинг метрик на выходные названия
     METRIC_MAPPING: ClassVar[dict[str, str]] = {
@@ -57,18 +44,23 @@ class ExtendedReport:
     }
 
     # Целочисленные поля
-    INTEGER_FIELDS: ClassVar[list[str]] = [
+    INTEGER_FIELDS: ClassVar[set[str]] = {
         "Продажи, шт",
         "Остатки, шт",
         "Остатки в пути",
-    ]
+    }
 
-    FINAL_COLNAMES: ClassVar[list[str]] = [
+    # Базовые колонки (всегда присутствуют)
+    BASE_COLNAMES: ClassVar[list[str]] = [
         "Код модели",
         "Наименование",
         "Артикул",
         "Магазин",
         "Код магазина",
+    ]
+
+    # Порядок метрик в выходном файле (максимальный набор)
+    METRIC_ORDER: ClassVar[list[str]] = [
         "Продажи, шт",
         "Остатки, шт",
         "Остатки в пути",
@@ -114,45 +106,49 @@ class ExtendedReport:
         """
         Найти блоки колонок для каждого магазина.
 
+        Магазины определяются динамически по непустым ячейкам в Row 0.
+        Размер блока (количество метрик) может отличаться от запуска к запуску.
+        Для каждого магазина находим фактические колонки метрик из Row 2.
+
         Returns
         -------
         list[dict]
-            Список словарей с информацией о магазинах:
-            [{'name': 'Магазин', 'code': '5645', 'start_col': 11}, ...]
+            [{'name': str, 'code': str, 'metrics': {metric_name: col_idx}}]
         """
-        row0 = self.raw_df.iloc[0]  # Названия магазинов
-        row1 = self.raw_df.iloc[1]  # Коды магазинов
-        row2 = self.raw_df.iloc[2]  # Метрики
+        row0 = self.raw_df.iloc[0]
+        row1 = self.raw_df.iloc[1]
+        row2 = self.raw_df.iloc[2]
+        total_cols = len(row0)
 
+        # Собираем все позиции непустых ячеек в Row 0 — это начала блоков
+        block_starts = []
+        for col_idx in range(total_cols):
+            val = row0.iloc[col_idx]
+            if pd.notna(val):
+                block_starts.append((col_idx, str(val)))
+
+        # Отбираем только магазины (пропускаем «Изделие» и «Итого»)
         shops = []
-        metrics_count = len(self.METRICS)
+        for i, (start_col, name) in enumerate(block_starts):
+            if name in ("Изделие", "Итого"):
+                continue
 
-        # Найти первую колонку с метриками (где Row 2 == "Кол-во")
-        first_metric_col = None
-        for col_idx, value in enumerate(row2):
-            if value == "Кол-во":
-                first_metric_col = col_idx
-                break
+            end_col = block_starts[i + 1][0] if i + 1 < len(block_starts) else total_cols
 
-        if first_metric_col is None:
-            raise KeyError("Не найдена колонка с метрикой 'Кол-во'")
+            shop_code = str(row1.iloc[start_col]) if pd.notna(row1.iloc[start_col]) else ""
 
-        # Пропускаем блок "Итого" (первый блок метрик)
-        current_col = first_metric_col + metrics_count
+            # Находим метрики внутри блока по Row 2
+            metrics = {}
+            for col in range(start_col, end_col):
+                metric_name = row2.iloc[col]
+                if pd.notna(metric_name):
+                    metrics[str(metric_name)] = col
 
-        while current_col < len(row0):
-            shop_name = row0.iloc[current_col]
-            shop_code = row1.iloc[current_col]
-
-            # Проверяем что это действительно магазин (есть название)
-            if pd.notna(shop_name) and shop_name != "Итого":
-                shops.append({
-                    "name": str(shop_name),
-                    "code": str(shop_code) if pd.notna(shop_code) else "",
-                    "start_col": current_col,
-                })
-
-            current_col += metrics_count
+            shops.append({
+                "name": name,
+                "code": shop_code,
+                "metrics": metrics,
+            })
 
         return shops
 
@@ -194,7 +190,6 @@ class ExtendedReport:
             raise ValueError("Не найдено ни одного магазина в данных")
 
         data_start_row = 4
-        metrics_count = len(self.METRICS)
         all_rows = []
 
         # Для каждого товара и каждого магазина создаём строку
@@ -210,12 +205,9 @@ class ExtendedReport:
                     "Код магазина": shop["code"],
                 }
 
-                # Извлекаем метрики для этого магазина
-                for metric_idx, metric_name in enumerate(self.METRICS):
-                    col_idx = shop["start_col"] + metric_idx
+                # Извлекаем метрики по фактическим позициям колонок
+                for metric_name, col_idx in shop["metrics"].items():
                     value = self.raw_df.iloc[raw_row_idx, col_idx]
-
-                    # Применяем маппинг названий
                     output_name = self.METRIC_MAPPING.get(metric_name, metric_name)
                     row_data[output_name] = value if pd.notna(value) else 0
 
@@ -233,20 +225,19 @@ class ExtendedReport:
         self.df["Код магазина"] = pd.to_numeric(self.df["Код магазина"], errors="coerce").fillna(0).astype(int)
 
         # Преобразование типов
-        for field in self.INTEGER_FIELDS:
-            if field in self.df.columns:
-                self.df[field] = pd.to_numeric(self.df[field], errors="coerce").fillna(0).astype(int)
+        for col in self.df.columns:
+            if col in self.BASE_COLNAMES:
+                continue
+            if col in self.INTEGER_FIELDS:
+                self.df[col] = pd.to_numeric(self.df[col], errors="coerce").fillna(0).astype(int)
+            else:
+                self.df[col] = pd.to_numeric(self.df[col], errors="coerce").fillna(0)
 
-        # Числовые поля
-        numeric_fields = ["Себестоимость без НДС", "Ост. Сумма без НДС", "Продажа без НДС"]
-        for field in numeric_fields:
-            if field in self.df.columns:
-                self.df[field] = pd.to_numeric(self.df[field], errors="coerce").fillna(0)
+        # Упорядочиваем колонки: базовые + метрики в порядке METRIC_ORDER
+        found_metrics = [m for m in self.METRIC_ORDER if m in self.df.columns]
+        self.df = self.df.reindex(columns=self.BASE_COLNAMES + found_metrics)
 
-        # Упорядочиваем колонки
-        self.df = self.df.reindex(columns=self.FINAL_COLNAMES)
-
-        # Сортировка по Артикул, затем по Магазин (как в старой версии)
+        # Сортировка по Артикул, затем по Магазин
         self.df = self.df.sort_values(
             by=["Артикул", "Магазин"]
         ).reset_index(drop=True)
