@@ -115,13 +115,26 @@ class ExtendedReport:
         izd_w = mwidth(1, izd_col)
         izd_end = izd_col + izd_w - 1
 
-        # 2. Поля товара — строка под «Изделие», внутри его ширины
+        # 2. Находим строку с полем "Код" — это базовая строка для полей товара
+        product_row = None
+        for try_row in [2, 3]:
+            for c in range(izd_col, izd_end + 1):
+                if ws.cell(try_row, c).value == "Код":
+                    product_row = try_row
+                    break
+            if product_row:
+                break
+        
+        if product_row is None:
+            raise KeyError("Не найдено поле 'Код' в области 'Изделие'")
+        
+        # 3. Поля товара — найденная строка с "Код", внутри ширины «Изделие»
         self._product_fields = []
         c = izd_col
         while c <= izd_end:
-            val = ws.cell(2, c).value
+            val = ws.cell(product_row, c).value
             if val:
-                w = mwidth(2, c)
+                w = mwidth(product_row, c)
                 self._product_fields.append({
                     "name": str(val),
                     "pd_col": c - 1,  # pandas 0-based
